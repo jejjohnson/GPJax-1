@@ -6,6 +6,9 @@ from .gp import Prior
 
 
 class DTCPrior(Prior):
+    """
+    Sparse Gaussian process that follows the deterministic training conditional inducing points scheme
+    """
     def __init__(self,
                  inducing_points: jnp.ndarray,
                  kernel: Kernel,
