@@ -2,7 +2,6 @@ from objax import TrainVar
 from objax.typing import JaxArray
 from objax.variable import reduce_mean
 from typing import Optional, Callable
-from jax.nn import softplus
 from .transforms import Transform, Softplus
 
 

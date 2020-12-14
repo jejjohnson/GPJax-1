@@ -1,3 +1,5 @@
 fixes:
   - "/home/runner/work/gpjax/gpjax/::" # Correct paths
 
+ignore:
+  - "docs/source/conf.py"
