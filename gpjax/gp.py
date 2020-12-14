@@ -1,14 +1,15 @@
 from .likelihoods import Gaussian, Likelihood
 from .kernel import Kernel
+from .spectral import SpectralKernel
 from .mean_functions import MeanFunction
 from .mean_functions import ZeroMean
 from objax import Module
 import jax.numpy as jnp
-from jax import nn
 from jax.scipy.linalg import cho_solve, cho_factor
 import jax.random as jr
 from tensorflow_probability.substrates import jax as tfp
 from typing import Optional
+from jax.scipy.linalg import solve_triangular
 
 tfd = tfp.distributions
 
@@ -68,7 +69,10 @@ class Prior(Module):
 
         Returns: A Gaussian process posterior.
         """
-        return Posterior(self, other)
+        if isinstance(self.kernel, SpectralKernel):
+            return SpectralPosterior(self, other)
+        else:
+            return Posterior(self, other)
 
 
 class Posterior(Module):
@@ -140,4 +144,59 @@ class Posterior(Module):
         # Compute the predictive variance
         v = cho_solve(L, Kfx.T)
         cov = Kxx - jnp.dot(Kfx, v)
+        return mu, cov
+
+
+class SpectralPosterior(Posterior):
+    def __init__(self, prior: Prior, likelihood: Gaussian):
+        super().__init__(prior, likelihood)
+
+    def marginal_ll(self, X: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+        N = X.shape[0]
+        m = self.kernel.num_basis
+        l_var = self.likelihood.noise.untransform
+        k_var = self.kernel.variance.untransform
+        phi = self.kernel._compute_phi(X)
+        A = (k_var / m) * jnp.matmul(phi.T, phi) + l_var * jnp.eye(m * 2)
+        assert A.shape == (2*m, 2*m)
+        Rt = jnp.linalg.cholesky(A)
+        RtiPhit = solve_triangular(Rt, phi.T)
+        # assert RtiPhit.shape == (N, N)
+        RtiPhity = jnp.matmul(RtiPhit, y)
+        # assert RtiPhity.shape == y.shape
+        term1 = (jnp.sum(y**2) -
+                 jnp.sum(RtiPhity**2) * k_var / m) * 0.5 / l_var
+        term2 = jnp.sum(jnp.log(jnp.diag(
+            Rt.T))) + (N * 0.5 - m) * jnp.log(l_var) + (N * 0.5 *
+                                                        jnp.log(2 * jnp.pi))
+        tot = term1 + term2
+        return tot.reshape()
+
+    def neg_mll(self, X: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+        return self.marginal_ll(X, y)
+
+    def predict(self, Xstar, X, y):
+        N = X.shape[0]
+        m = self.kernel.num_basis
+        l_var = self.likelihood.noise.untransform
+        k_var = self.kernel.variance.untransform
+        phi = self.kernel._compute_phi(X)
+        A = (k_var / m) * jnp.matmul(phi.T, phi) + l_var * jnp.eye(m * 2)
+        Rt = jnp.linalg.cholesky(A)
+        RtiPhit = solve_triangular(Rt, phi.T)
+        RtiPhity = jnp.matmul(RtiPhit, y)
+
+        alpha = (k_var/m) * solve_triangular(Rt, RtiPhity, lower=False)
+        omega = self.kernel.scale_frequencies()
+        phistar = jnp.matmul(Xstar, omega.T)
+
+        cos_freqs = jnp.cos(phistar)
+        sin_freqs = jnp.sin(phistar)
+        phistar = jnp.hstack((cos_freqs, sin_freqs))
+        mu = jnp.matmul(phistar, alpha)
+
+        RtiPhistart = solve_triangular(Rt, phistar.T)
+        PhiRistar = RtiPhistart.T
+
+        cov = l_var*(k_var/m) * jnp.matmul(PhiRistar, PhiRistar.T) + jnp.eye(Xstar.shape[0])*self.jitter
         return mu, cov
