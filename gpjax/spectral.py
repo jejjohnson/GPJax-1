@@ -37,7 +37,7 @@ class SpectralKernel(Stationary):
 
         Returns: The original frequencies, now scaled by the kernel's lengthscale.
         """
-        return self.features.value / self.lengthscale.untransform
+        return self.features.untransform / self.lengthscale.untransform
 
     @staticmethod
     def compute_gram(phi):

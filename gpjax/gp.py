@@ -152,51 +152,51 @@ class SpectralPosterior(Posterior):
         super().__init__(prior, likelihood)
 
     def marginal_ll(self, X: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-        N = X.shape[0]
+        r"""
+        Compute the :math:`p(y| \theta)`, the marginal log-likelihood. The variable names used in this implementation should correspond with those used in Appendix A of http://quinonero.net/Publications/lazaro-gredilla10a.pdf
+
+        Args:
+            X: Observational inputs
+            y: Observational outputs
+
+        Returns: Scalar value that quantifies the model's marginal log-likelihood.
+
+        """
+        n = X.shape[0]
         m = self.kernel.num_basis
-        l_var = self.likelihood.noise.untransform
-        k_var = self.kernel.variance.untransform
-        phi = self.kernel._compute_phi(X)
-        A = (k_var / m) * jnp.matmul(phi.T, phi) + l_var * jnp.eye(m * 2)
-        assert A.shape == (2*m, 2*m)
-        Rt = jnp.linalg.cholesky(A)
-        RtiPhit = solve_triangular(Rt, phi.T)
-        # assert RtiPhit.shape == (N, N)
-        RtiPhity = jnp.matmul(RtiPhit, y)
-        # assert RtiPhity.shape == y.shape
-        term1 = (jnp.sum(y**2) -
-                 jnp.sum(RtiPhity**2) * k_var / m) * 0.5 / l_var
-        term2 = jnp.sum(jnp.log(jnp.diag(
-            Rt.T))) + (N * 0.5 - m) * jnp.log(l_var) + (N * 0.5 *
-                                                        jnp.log(2 * jnp.pi))
-        tot = term1 + term2
-        return tot.reshape()
+        sigma_n = self.likelihood.noise.untransform
+        sigma_nought = self.kernel.variance.untransform
+        phif = self.kernel._compute_phi(X).T
+        R = jnp.linalg.cholesky((sigma_nought/m)*(jnp.matmul(phif, phif.T))+sigma_n*jnp.eye(2*m))
+        PhiRi = solve_triangular(R, phif)
+        RtiPhiY = jnp.matmul(PhiRi, y)
+        term1 = (
+                0.5
+                / sigma_n ** 2
+                * (jnp.sum(y ** 2) - sigma_nought ** 2 / m * jnp.sum(jnp.square(RtiPhiY)))
+        ).reshape()
+        term2 = (
+                jnp.sum(jnp.log(jnp.diag(R)))
+                + (n / 2 - m) * jnp.log(sigma_n ** 2)
+                + n / 2 * jnp.log(2 * jnp.pi)
+        ).reshape()
+        return term1+term2
 
     def neg_mll(self, X: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-        return self.marginal_ll(X, y)
+        return -self.marginal_ll(X, y).reshape()
 
     def predict(self, Xstar, X, y):
-        N = X.shape[0]
         m = self.kernel.num_basis
-        l_var = self.likelihood.noise.untransform
-        k_var = self.kernel.variance.untransform
-        phi = self.kernel._compute_phi(X)
-        A = (k_var / m) * jnp.matmul(phi.T, phi) + l_var * jnp.eye(m * 2)
-        Rt = jnp.linalg.cholesky(A)
-        RtiPhit = solve_triangular(Rt, phi.T)
-        RtiPhity = jnp.matmul(RtiPhit, y)
+        sigma_n = self.likelihood.noise.untransform**2
+        sigma_nought = self.kernel.variance.untransform**2
+        phif = self.kernel._compute_phi(X).T
+        phistar = self.kernel._compute_phi(Xstar)
 
-        alpha = (k_var/m) * solve_triangular(Rt, RtiPhity, lower=False)
-        omega = self.kernel.scale_frequencies()
-        phistar = jnp.matmul(Xstar, omega.T)
+        R = jnp.linalg.cholesky((sigma_nought / m) * (jnp.matmul(phif, phif.T)) + sigma_n * jnp.eye(2 * m))
+        PhiRi = solve_triangular(R, phif)
+        RtiPhiY = jnp.matmul(PhiRi, y)
 
-        cos_freqs = jnp.cos(phistar)
-        sin_freqs = jnp.sin(phistar)
-        phistar = jnp.hstack((cos_freqs, sin_freqs))
+        alpha = (sigma_nought/m)*solve_triangular(R, RtiPhiY)
         mu = jnp.matmul(phistar, alpha)
-
-        RtiPhistart = solve_triangular(Rt, phistar.T)
-        PhiRistar = RtiPhistart.T
-
-        cov = l_var*(k_var/m) * jnp.matmul(PhiRistar, PhiRistar.T) + jnp.eye(Xstar.shape[0])*self.jitter
+        cov = sigma_n*sigma_nought/m * jnp.sum(solve_triangular(R, phistar.T).T, axis=1)
         return mu, cov
