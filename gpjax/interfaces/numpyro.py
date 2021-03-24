@@ -15,6 +15,7 @@ from gpjax.gps import ConjugatePosterior, NonConjugatePosterior
 from gpjax.kernels import gram
 from gpjax.likelihoods import link_function
 from gpjax.utils import I
+from gpjax.types import Dataset
 
 numpyro_constraint = numpyro.distributions.constraints.Constraint
 numpyro_priors = numpyro.distributions.Distribution
@@ -96,7 +97,9 @@ def add_priors(params: dict, priors: numpyro_priors):
 
 @dispatch(ConjugatePosterior, dict)
 def numpyro_marginal_ll(gp: ConjugatePosterior, numpyro_params: dict) -> Callable:
-    def mll(x: Array, y: Array):
+    def mll(dataset: Dataset):
+
+        x, y = dataset.X, dataset.y
 
         params = {}
 
